@@ -1,8 +1,7 @@
 #include "LED.h"
-
+#include "ledcontrol.h"
 
 #include "MemManager.h"
-#include "TimersManager.h"
 #include "Messaging.h"
 #include "SecLib.h"
 #include "Panic.h"
@@ -14,8 +13,6 @@
 
 #include "FreeRTOSConfig.h"
 
-#include "genfsk_interface.h"
-#include "connectivity_test.h"
 
 #define App_NotifySelf() OSA_EventSet(mAppThreadEvt, gCtEvtSelfEvent_c)
 
@@ -25,8 +22,7 @@ static void App_Thread (uint32_t param);
 static void App_HandleEvents(osaEventFlags_t flags);
 /*Function that reads latest byte from Serial Manager*/
 static void App_UpdateUartData(uint8_t* pData);
-/*Application Init*/
-static void App_InitApp();
+
 
 /*Generic FSK RX callback*/
 static void App_GenFskReceiveCallback(uint8_t *pBuffer, 
@@ -39,11 +35,10 @@ static void App_GenFskEventNotificationCallback(genfskEvent_t event,
                                                 genfskEventStatus_t eventStatus);
 /*Serial Manager UART RX callback*/
 static void App_SerialCallback(void* param);
-/*Application Thread notification function (sends event to application task)*/
-static void App_NotifyAppThread(void);
-/*Timer callback*/
-static void App_TimerCallback(void* param);
 
+
+//application specific genfsk init
+static void gFsk_Init();
 
 
 /************************************************************************************
@@ -63,8 +58,7 @@ static uint8_t mAppUartData = 0;
 /*set TRUE when user presses [ENTER] on logo screen*/
 static bool_t mAppStartApp = FALSE;
 
-static bool_t mAppInit = false;
-
+static app_states_t appState = gAppStateInit_c;
 
 /*structure to store information regarding latest received packet*/
 static ct_rx_indication_t mAppRxLatestPacket;
@@ -74,6 +68,17 @@ static genfskEventStatus_t mAppGenfskStatus;
 
 /* GENFSK instance id*/
 uint8_t mAppGenfskId;
+
+// transmission buffer and packet
+static uint8_t* gTxBuffer;
+static GENFSK_packet_t gTxPacket;
+
+//receive buffer/packet
+static uint8_t* gRxBuffer;
+static GENFSK_packet_t gRxPacket;
+
+//length of genfsk buffer
+uint16_t buffLen;
 
 /*extern MCU reset api*/
 extern void ResetMCU(void);
@@ -96,7 +101,7 @@ void main_task(uint32_t param)
         
         /* Framework init */
         MEM_Init();
-        TMR_Init();
+
         //initialize Serial Manager
         SerialManager_Init();
         LED_Init();
@@ -105,8 +110,7 @@ void main_task(uint32_t param)
 
         GENFSK_Init();
         
-        /* GENFSK LL Init with default register config */
-        GENFSK_AllocInstance(&mAppGenfskId, NULL, NULL, NULL);   
+
         
         /*create app thread event*/
         mAppThreadEvt = OSA_EventCreate(TRUE);
@@ -122,9 +126,15 @@ void main_task(uint32_t param)
         /*set Serial Manager receive callback*/
         Serial_SetRxCallBack(mAppSerId, App_SerialCallback, NULL);
         
-        /*allocate a timer*/
-        mAppTmrId = TMR_AllocateTimer();
-        Serial_Print(mAppSerId, "Hi welcome to this shitty led thing press enter to start\r\n", gAllowToBlock_d);
+
+        /* GENFSK LL Init with default register config */
+        if(gGenfskSuccess_c != GENFSK_AllocInstance(&mAppGenfskId, NULL, NULL, NULL))
+        {
+        	Serial_Print(mAppGenfskId,"Allocation failed...\r\n",gAllowToBlock_d);
+        }
+
+        Serial_Print(mAppSerId, "Welcome to the remote LED controller. Press [ENTER] to begin.\r\n", gAllowToBlock_d);
+
     }
     
     /* Call application task */
@@ -143,8 +153,26 @@ void App_Thread (uint32_t param)
 {
     osaEventFlags_t mAppThreadEvtFlags = 0;
     
+
     while(1)
     {
+    	switch(appState)
+    	{
+    	case gAppStateInit_c:
+    		break;
+    	case gAppRx_c:
+    		GENFSK_AbortAll();
+    		GENFSK_StartRx(mAppGenfskId, gRxBuffer, gGenFskDefaultMaxBufferSize_c+crcConfig.crcSize, 0, 0);
+    		break;
+    	case gAppTx_c:
+    		Serial_Print(mAppSerId,"Starting transmission...\r\n",gAllowToBlock_d);
+    		GENFSK_AbortAll();
+    		GENFSK_StartTx(mAppGenfskId,gTxBuffer,buffLen,0);
+    		break;
+    	default: break;
+
+
+    	}
         (void)OSA_EventWait(mAppThreadEvt, gCtEvtEventsAll_c, FALSE, osaWaitForever_c ,&mAppThreadEvtFlags);
         if(mAppThreadEvtFlags)
         {
@@ -160,13 +188,16 @@ void App_Thread (uint32_t param)
                     if(mAppUartData == '\r')
                     {
                         mAppStartApp = TRUE;
+            			gFsk_Init();
+            			appState = gAppRx_c;
+            			Serial_Print(mAppSerId,"Press the [r], [g] and [b] keys to control LEDs\r\n",gAllowToBlock_d);
                         /*notify task again to start running*/
                         App_NotifySelf();
                     }
                     else
                     {
                         /*if other key is pressed show screen again*/
-                        Serial_Print(mAppSerId, "press enter dickhead dont make me repeat myself\r\n", gAllowToBlock_d);
+                        Serial_Print(mAppSerId, "Please press [ENTER] to begin.\r\n", gAllowToBlock_d);
                     }
                 }
             }
@@ -187,35 +218,66 @@ void App_HandleEvents(osaEventFlags_t flags)
     if(flags & gCtEvtUart_c)
     {
         App_UpdateUartData(&mAppUartData);
-    }
-    if((mAppUartData == '\r') && (!mAppInit))
-    {
-    	Serial_Print(mAppSerId, "well done you pressed enter you genius have fun playing with LEDs\r\n",gAllowToBlock_d);
-    	mAppInit = true;
-    }
-    else
-    {
+
 		if((mAppUartData != 'r')&&(mAppUartData != 'g')&&(mAppUartData != 'b'))
 		{
-			Serial_Print(mAppSerId, "wrong button dumbass try again\r\n", gAllowToBlock_d);
+			appState = gAppRx_c;
 		}
 		else
 		{
+			gTxPacket.header.lengthField = gGenFskMinPayloadLen_c;
 			if(mAppUartData == 'r')
 			{
-				Led2Toggle();
+				gTxPacket.payload[0] = 0;
+				buffLen = gTxPacket.header.lengthField+(gGenFskDefaultHeaderSizeBytes_c)+(gGenFskDefaultSyncAddrSize_c + 1);
+				GENFSK_PacketToByteArray(mAppGenfskId, &gTxPacket, gTxBuffer);
+				appState = gAppTx_c;
 			}
 			else if(mAppUartData == 'g')
 			{
-				Led3Toggle();
+				gTxPacket.payload[0] = 1;
+				buffLen = gTxPacket.header.lengthField+(gGenFskDefaultHeaderSizeBytes_c)+(gGenFskDefaultSyncAddrSize_c + 1);
+				GENFSK_PacketToByteArray(mAppGenfskId, &gTxPacket, gTxBuffer);
+				appState = gAppTx_c;
 			}
 			else
 			{
-				Led4Toggle();
+				gTxPacket.payload[0] = 2;
+				buffLen = gTxPacket.header.lengthField+(gGenFskDefaultHeaderSizeBytes_c)+(gGenFskDefaultSyncAddrSize_c + 1);
+				GENFSK_PacketToByteArray(mAppGenfskId, &gTxPacket, gTxBuffer);
+				appState = gAppTx_c;
 			}
 		}
     }
+    else if(flags & gCtEvtRxDone_c) //received comms
+    {
 
+    	GENFSK_ByteArrayToPacket(mAppGenfskId, mAppRxLatestPacket.pBuffer, &gRxPacket);
+    	uint8_t data = gRxPacket.payload[0];
+    	if(data == 0)
+    	{
+    		Led1Toggle();
+    	}
+    	else if(data == 1)
+    	{
+    		Led2Toggle();
+    	}
+    	else if(data == 2)
+    	{
+    		Led3Toggle();
+    	}
+    	else
+    	{
+    	}
+
+    	appState = gAppRx_c;
+    }
+    else if(flags & gCtEvtTxDone_c)
+    {
+    	Serial_Print(mAppSerId,"Transmission finished\r\n",gAllowToBlock_d);
+    	appState = gAppRx_c;
+    }
+    else{}
 }
 
 /*! *********************************************************************************
@@ -239,20 +301,7 @@ static void App_UpdateUartData(uint8_t* pData)
     } 
 }
 
-/*! *********************************************************************************
-* \brief  Application initialization. It installs the main menu callbacks and
-*         calls the Connectivity Test for Generic FSK init.
-*
-********************************************************************************** */
-static void App_InitApp()
-{   
 
-   /*register callbacks for the generic fsk LL */
-   GENFSK_RegisterCallbacks(mAppGenfskId,
-                            App_GenFskReceiveCallback, 
-                            App_GenFskEventNotificationCallback);
-   
-}
 
 /*! *********************************************************************************
 * \brief  This function represents the Generic FSK receive callback. 
@@ -314,13 +363,40 @@ static void App_SerialCallback(void* param)
     OSA_EventSet(mAppThreadEvt, gCtEvtUart_c);
 }
 
-static void App_NotifyAppThread(void)
+
+static void gFsk_Init()
 {
-    App_NotifySelf();
-}
-static void App_TimerCallback(void* param)
-{
-    OSA_EventSet(mAppThreadEvt, gCtEvtTimerExpired_c);
+	GENFSK_RegisterCallbacks(mAppGenfskId, App_GenFskReceiveCallback, App_GenFskEventNotificationCallback);
+    gRxBuffer  = MEM_BufferAlloc(gGenFskDefaultMaxBufferSize_c +
+                                 crcConfig.crcSize);
+    gTxBuffer  = MEM_BufferAlloc(gGenFskDefaultMaxBufferSize_c);
+
+    gRxPacket.payload = (uint8_t*)MEM_BufferAlloc(gGenFskMaxPayloadLen_c  +
+                                                       crcConfig.crcSize);
+    gTxPacket.payload = (uint8_t*)MEM_BufferAlloc(gGenFskMaxPayloadLen_c);
+
+    /*prepare the part of the tx packet that is common for all tests*/
+    gTxPacket.addr = gGenFskDefaultSyncAddress_c;
+    gTxPacket.header.h0Field = gGenFskDefaultH0Value_c;
+    gTxPacket.header.h1Field = gGenFskDefaultH1Value_c;
+
+    /*set bitrate*/
+    GENFSK_RadioConfig(mAppGenfskId, &radioConfig);
+    /*set packet config*/
+    GENFSK_SetPacketConfig(mAppGenfskId, &pktConfig);
+    /*set whitener config*/
+    GENFSK_SetWhitenerConfig(mAppGenfskId, &whitenConfig);
+    /*set crc config*/
+    GENFSK_SetCrcConfig(mAppGenfskId, &crcConfig);
+
+    /*set network address at location 0 and enable it*/
+    GENFSK_SetNetworkAddress(mAppGenfskId, 0, &ntwkAddr);
+    GENFSK_EnableNetworkAddress(mAppGenfskId, 0);
+
+    /*set tx power level*/
+    GENFSK_SetTxPowerLevel(mAppGenfskId, gGenFskDefaultTxPowerLevel_c);
+    /*set channel: Freq = 2360MHz + ChannNumber*1MHz*/
+    GENFSK_SetChannelNumber(mAppGenfskId, gGenFskDefaultChannel_c);
 }
 
 

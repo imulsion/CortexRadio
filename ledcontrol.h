@@ -10,6 +10,7 @@
 ********************************************************************************** */
 #include "EmbeddedTypes.h"
 #include "fsl_os_abstraction.h"
+#include "genfsk_interface.h"
 
 /*! *********************************************************************************
 *************************************************************************************
@@ -20,10 +21,8 @@
 typedef enum app_states_tag
 {
     gAppStateInit_c = 0,
-    gAppStateIdle_c,
-    gAppStateSelectTest_c,
-    gAppStateRunning_c,
-    gAppStateMaxState_c
+	gAppTx_c = 1,
+	gAppRx_c = 2,
 }app_states_t;
 
 /*! *********************************************************************************
@@ -64,25 +63,7 @@ typedef enum ct_event_tag
   gCtEvtEventsAll_c    = 0x000003FFU
 }ct_event_t;
 
-typedef enum ct_param_type_tag{
-    gParamTypeNumber_c = 0,
-    gParamTypeString_c,
-    gParamTypeBool_c,
-    gParamTypeMaxType_c
-}ct_param_type_t;
 
-typedef struct ct_config_params_tag
-{
-    ct_param_type_t paramType;
-    uint8_t paramName[20];
-    union
-    {
-        uint32_t decValue;
-        uint8_t stringValue[4];
-        bool_t  boolValue;
-    }
-    paramValue;
-}ct_config_params_t;
 
 typedef struct ct_rx_indication_tag
 {
@@ -95,6 +76,8 @@ typedef struct ct_rx_indication_tag
 
 typedef void (* pHookAppNotification) ( void );
 typedef void (* pTmrHookNotification) (void*);
+
+
 /*! *********************************************************************************
 *************************************************************************************
 * Public macros
@@ -150,7 +133,76 @@ typedef void (* pTmrHookNotification) (void*);
 * Public memory declarations
 *************************************************************************************
 ********************************************************************************** */
-ct_config_params_t gaConfigParams[];
+
+/*packet configuration*/
+static GENFSK_packet_config_t pktConfig =
+{
+    .preambleSizeBytes = 0, /*1 byte of preamble*/
+    .packetType = gGenfskFormattedPacket,
+    .lengthSizeBits = gGenFskDefaultLengthFieldSize_c,
+    .lengthBitOrder = gGenfskLengthBitLsbFirst,
+    /*sync address bytes = size + 1*/
+    .syncAddrSizeBytes = gGenFskDefaultSyncAddrSize_c,
+    .lengthAdjBytes = 3, /*length field not including CRC so adjust by crc len*/
+    .h0SizeBits = gGenFskDefaultH0FieldSize_c,
+    .h1SizeBits = gGenFskDefaultH1FieldSize_c,
+    .h0Match = gGenFskDefaultH0Value_c, /*match field containing zeros*/
+    .h0Mask = gGenFskDefaultH0Mask_c,
+    .h1Match = gGenFskDefaultH1Value_c,
+    .h1Mask = gGenFskDefaultH1Mask_c
+};
+
+/*CRC configuration*/
+static GENFSK_crc_config_t crcConfig =
+{
+    .crcEnable = gGenfskCrcEnable,
+    .crcSize = 3,
+    .crcStartByte = 4,
+    .crcRefIn = gGenfskCrcInputNoRef,
+    .crcRefOut = gGenfskCrcOutputNoRef,
+    .crcByteOrder = gGenfskCrcLSByteFirst,
+    .crcSeed = 0x00555555,
+    .crcPoly = 0x0000065B,
+    .crcXorOut = 0
+};
+
+/*whitener configuration*/
+static GENFSK_whitener_config_t whitenConfig =
+{
+    .whitenEnable = gGenfskWhitenEnable,
+    .whitenStart = gWhitenStartWhiteningAtH0,
+    .whitenEnd = gWhitenEndAtEndOfCrc,
+    .whitenB4Crc = gCrcB4Whiten,
+    .whitenPolyType = gGaloisPolyType,
+    .whitenRefIn = gGenfskWhitenInputNoRef,
+    .whitenPayloadReinit = gGenfskWhitenNoPayloadReinit,
+    .whitenSize = 7,
+    .whitenInit = 0x53,
+    .whitenPoly = 0x11, /*x^7 + x^4 + 1! x^7 is never set*/
+    .whitenSizeThr = 0,
+    .manchesterEn = gGenfskManchesterDisable,
+    .manchesterStart = gGenfskManchesterStartAtPayload,
+    .manchesterInv = gGenfskManchesterNoInv,
+};
+
+/*radio configuration*/
+static GENFSK_radio_config_t radioConfig =
+{
+    .radioMode = gGenfskGfskBt0p5h0p5,
+    .dataRate = gGenfskDR1Mbps
+};
+
+/*bit processing configuration*/
+
+/*network / sync address configuration*/
+static GENFSK_nwk_addr_match_t ntwkAddr =
+{
+    .nwkAddrSizeBytes = gGenFskDefaultSyncAddrSize_c,
+    .nwkAddrThrBits = 0,
+    .nwkAddr = gGenFskDefaultSyncAddress_c,
+};
+
+
 uint8_t mAppSerId;
 uint8_t mAppTmrId;
 
