@@ -55,10 +55,7 @@ static osaEventId_t mAppThreadEvt;
 static uint8_t mAppUartData = 0;
 
 
-/*set TRUE when user presses [ENTER] on logo screen*/
-static bool_t mAppStartApp = FALSE;
-
-static app_states_t appState = gAppStateInit_c;
+static app_states_t appState = gAppRx_c;
 
 /*structure to store information regarding latest received packet*/
 static ct_rx_indication_t mAppRxLatestPacket;
@@ -133,7 +130,8 @@ void main_task(uint32_t param)
         	Serial_Print(mAppGenfskId,"Allocation failed...\r\n",gAllowToBlock_d);
         }
 
-        Serial_Print(mAppSerId, "Welcome to the remote LED controller. Press [ENTER] to begin.\r\n", gAllowToBlock_d);
+        Serial_Print(mAppSerId, "Welcome to the remote LED controller.\r\n", gAllowToBlock_d);
+		Serial_Print(mAppSerId,"Press the [r], [g] and [b] keys to control LEDs\r\n",gAllowToBlock_d);
 
     }
     
@@ -153,13 +151,12 @@ void App_Thread (uint32_t param)
 {
     osaEventFlags_t mAppThreadEvtFlags = 0;
     
+    gFsk_Init();
 
     while(1)
     {
     	switch(appState)
     	{
-    	case gAppStateInit_c:
-    		break;
     	case gAppRx_c:
     		GENFSK_AbortAll();
     		GENFSK_StartRx(mAppGenfskId, gRxBuffer, gGenFskDefaultMaxBufferSize_c+crcConfig.crcSize, 0, 0);
@@ -176,31 +173,7 @@ void App_Thread (uint32_t param)
         (void)OSA_EventWait(mAppThreadEvt, gCtEvtEventsAll_c, FALSE, osaWaitForever_c ,&mAppThreadEvtFlags);
         if(mAppThreadEvtFlags)
         {
-            if(mAppStartApp)
-            {
-                App_HandleEvents(mAppThreadEvtFlags);/*handle app events*/
-            }
-            else
-            {
-                if(mAppThreadEvtFlags & gCtEvtUart_c) /*if uart event*/
-                {
-                    App_UpdateUartData(&mAppUartData); /*read new byte*/
-                    if(mAppUartData == '\r')
-                    {
-                        mAppStartApp = TRUE;
-            			gFsk_Init();
-            			appState = gAppRx_c;
-            			Serial_Print(mAppSerId,"Press the [r], [g] and [b] keys to control LEDs\r\n",gAllowToBlock_d);
-                        /*notify task again to start running*/
-                        App_NotifySelf();
-                    }
-                    else
-                    {
-                        /*if other key is pressed show screen again*/
-                        Serial_Print(mAppSerId, "Please press [ENTER] to begin.\r\n", gAllowToBlock_d);
-                    }
-                }
-            }
+        	App_HandleEvents(mAppThreadEvtFlags);/*handle app events*/
         }
     }
 }
@@ -256,15 +229,15 @@ void App_HandleEvents(osaEventFlags_t flags)
     	uint8_t data = gRxPacket.payload[0];
     	if(data == 0)
     	{
-    		Led1Toggle();
+    		Led2Toggle();
     	}
     	else if(data == 1)
     	{
-    		Led2Toggle();
+    		Led3Toggle();
     	}
     	else if(data == 2)
     	{
-    		Led3Toggle();
+    		Led4Toggle();
     	}
     	else
     	{

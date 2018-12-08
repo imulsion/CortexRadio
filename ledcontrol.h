@@ -20,9 +20,8 @@
 /*application state machine states enumeration*/
 typedef enum app_states_tag
 {
-    gAppStateInit_c = 0,
-	gAppTx_c = 1,
-	gAppRx_c = 2,
+	gAppTx_c = 0,
+	gAppRx_c = 1,
 }app_states_t;
 
 /*! *********************************************************************************
