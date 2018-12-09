@@ -55,15 +55,12 @@ static uint8_t platformInitialized = 0;
 /*event used by the application thread*/
 static osaEventId_t mAppThreadEvt;
 
-#ifdef LEDCONTROL_MASTER
+
 /*variable to store key pressed by user*/
 static uint8_t mAppUartData = 0;
-static bool timerInit = false;
-#endif
 
 
-//transmit or receive state
-static app_states_t appState = gAppRx_c;
+
 
 #ifdef LEDCONTROL_MASTER
 static connectivity_states_t conState = gAppSlave1Check;
@@ -114,11 +111,13 @@ void main_task(uint32_t param)
         SecLib_Init();
 #ifdef LEDCONTROL_MASTER
         TMR_Init();
+        mAppTmrId = TMR_AllocateTimer();
+
 #endif
 
         GENFSK_Init();
         
-        mAppTmrId = TMR_AllocateTimer();
+
 
         
         /*create app thread event*/
@@ -165,26 +164,11 @@ void App_Thread (uint32_t param)
     gFsk_Init();
 #ifdef LEDCONTROL_MASTER
     TMR_EnableTimer(mAppTmrId);
-    TMR_StartSingleShotTimer(mAppTmrId,10, App_TimerCallback, NULL);
+    TMR_StartIntervalTimer(mAppTmrId,LEDCONTROL_CONNECTIONCHECK_TIMEOUT_MILLISECONDS, App_TimerCallback, NULL);
 #endif
+    GENFSK_StartRx(mAppGenfskId, gRxBuffer, gGenFskDefaultMaxBufferSize_c+crcConfig.crcSize, 0, 0);
     while(1)
     {
-    	switch(appState)
-    	{
-    	case gAppRx_c:
-    		GENFSK_AbortAll();
-    		GENFSK_StartRx(mAppGenfskId, gRxBuffer, gGenFskDefaultMaxBufferSize_c+crcConfig.crcSize, 0, 0);
-    		break;
-    	case gAppTx_c:
-    		GENFSK_AbortAll();
-    		GENFSK_StartTx(mAppGenfskId,gTxBuffer,buffLen,0);
-    		break;
-    	default:
-    		GENFSK_AbortAll();
-    		appState = gAppRx_c;
-    		break;
-
-    	}
         (void)OSA_EventWait(mAppThreadEvt, gCtEvtEventsAll_c, FALSE, osaWaitForever_c ,&mAppThreadEvtFlags);
         if(mAppThreadEvtFlags)
         {
@@ -193,24 +177,16 @@ void App_Thread (uint32_t param)
     }
 }
 
-
-
-/*! *********************************************************************************
-* \brief  The application event handler 
-*         This function is called each time there is an OS event for the AppThread
-* \param[in]  flags The OS event flags specific to the Connectivity Test App.
-*
-********************************************************************************** */
 void App_HandleEvents(osaEventFlags_t flags)
 {
     if(flags & gCtEvtUart_c)
     {
-#ifdef LEDCONTROL_MASTER //slave boards should never fire a uart event
         App_UpdateUartData(&mAppUartData);
 
+
+
 		if(
-				  (mAppUartData != '0')
-				&&(mAppUartData != '1')
+				  (mAppUartData != '1')
 				&&(mAppUartData != '2')
 				&&(mAppUartData != '3')
 				&&(mAppUartData != '4')
@@ -218,13 +194,15 @@ void App_HandleEvents(osaEventFlags_t flags)
 				&&(mAppUartData != '6')
 				&&(mAppUartData != '7')
 				&&(mAppUartData != '8')
+				&&(mAppUartData != '9')
 		  )
 		{
-			appState = gAppRx_c;//incorrect character sent, ignore
+			GENFSK_AbortAll();
+			GENFSK_StartRx(mAppGenfskId, gRxBuffer, gGenFskDefaultMaxBufferSize_c+crcConfig.crcSize, 0, 0);
 		}
 		else
 		{
-			int command = mAppUartData - '0';//convert to int
+			int command = (mAppUartData - '0')-1;//convert to int
 			gTxPacket.header.lengthField = gGenFskMinPayloadLen_c;
 			switch(command)
 			{
@@ -278,199 +256,229 @@ void App_HandleEvents(osaEventFlags_t flags)
 
 				buffLen = gTxPacket.header.lengthField+(gGenFskDefaultHeaderSizeBytes_c)+(gGenFskDefaultSyncAddrSize_c + 1);
 				GENFSK_PacketToByteArray(mAppGenfskId, &gTxPacket, gTxBuffer);
-				appState = gAppTx_c;
+				GENFSK_AbortAll();
+				GENFSK_StartTx(mAppGenfskId, gTxBuffer, buffLen, 0);
 			}
 		}
-#endif
     }
     else if(flags & gCtEvtRxDone_c) //received comms
     {
+
     	GENFSK_ByteArrayToPacket(mAppGenfskId, mAppRxLatestPacket.pBuffer, &gRxPacket);
     	uint8_t devID = gRxPacket.payload[0];
     	uint8_t data = gRxPacket.payload[1];
 #ifdef LEDCONTROL_MASTER
 
-    	if(data == 3)
+    	if(data == 'v')
     	{
-    		if(
-    				  ((conState == gAppSlave1Check) && (devID = LEDCONTROL_DEVICE_ID_ZERO))
-					||((conState == gAppSlave2Check) && (devID = LEDCONTROL_DEVICE_ID_ONE))
-					||((conState == gAppSlave3Check) && (devID = LEDCONTROL_DEVICE_ID_TWO))
-			  )
+    		if((conState == gAppSlave1Check) && (devID = LEDCONTROL_DEVICE_ID_ZERO))
     		{
-    			//successful reply from connectivity check, stop timer and start new check
-    			Serial_Print(mAppSerId,"Connectivity check successful",gAllowToBlock_d);
-    			TMR_StopTimer(mAppTmrId);
-    			if(conState == gAppSlave1Check)
-    			{
-    				conState = gAppSlave2Check;
-    			}
-    			else if(conState == gAppSlave2Check)
-    			{
-    				conState = gAppSlave3Check;
-    			}
-    			else if(conState == gAppSlave3Check)
-    			{
-    				conState = gAppSlave1Check;
-    			}
-    			else
-    			{
-    				//unreachable
-    			}
-    			gTxPacket.payload[1] = 3;
-    			if(conState == gAppSlave1Check)
-    			{
-    				gTxPacket.payload[0] = LEDCONTROL_DEVICE_ID_ZERO;
-    			}
-    			else if(conState == gAppSlave2Check)
-    			{
-    				gTxPacket.payload[0] = LEDCONTROL_DEVICE_ID_ONE;
-    			}
-    			else if(conState == gAppSlave3Check)
-    			{
-    				gTxPacket.payload[0] = LEDCONTROL_DEVICE_ID_TWO;
-    			}
-    			else
-    			{
-    				//unreachable
-    			}
-				buffLen = gTxPacket.header.lengthField+(gGenFskDefaultHeaderSizeBytes_c)+(gGenFskDefaultSyncAddrSize_c + 1);
-				GENFSK_PacketToByteArray(mAppGenfskId, &gTxPacket, gTxBuffer);
-				appState = gAppTx_c;
-
+    			slave1connected = true;
+    		}
+    		else if((conState == gAppSlave2Check) && (devID = LEDCONTROL_DEVICE_ID_ONE))
+    		{
+    			slave2connected = true;
+    		}
+    		else if((conState == gAppSlave3Check) && (devID = LEDCONTROL_DEVICE_ID_TWO))
+    		{
+    			slave3connected = true;
     		}
     		else
     		{
     			//bad packet, ignore
-    			appState = gAppRx_c;
     		}
     	}
     	else
     	{
         	//TODO: Print suitable data back to indicate successful slave reception of data
-        	appState = gAppRx_c;
+    		if(devID == 0)
+    		{
+    			if(data == 'r')
+    			{
+    				Serial_Print(mAppSerId,"1",gAllowToBlock_d);
+    			}
+    			else if(data == 'g')
+    			{
+    				Serial_Print(mAppSerId,"2",gAllowToBlock_d);
+    			}
+    			else if(data == 'b')
+    			{
+    				Serial_Print(mAppSerId,"3",gAllowToBlock_d);
+    			}
+    			else
+    			{
+    				//bad data
+    			}
+    		}
+    		else if(devID == 1)
+    		{
+    			if(data == 'r')
+    			{
+    				Serial_Print(mAppSerId,"4",gAllowToBlock_d);
+    			}
+    			else if(data == 'g')
+    			{
+    				Serial_Print(mAppSerId,"5",gAllowToBlock_d);
+    			}
+    			else if(data == 'b')
+    			{
+    				Serial_Print(mAppSerId,"6",gAllowToBlock_d);
+    			}
+    			else
+    			{
+    				//bad data
+    			}
+    		}
+    		else if(devID == 2)
+    		{
+    			if(data == 'r')
+    			{
+    				Serial_Print(mAppSerId,"7",gAllowToBlock_d);
+    			}
+    			else if(data == 'g')
+    			{
+    				Serial_Print(mAppSerId,"8",gAllowToBlock_d);
+    			}
+    			else if(data == 'b')
+    			{
+    				Serial_Print(mAppSerId,"9",gAllowToBlock_d);
+    			}
+    			else
+    			{
+    				//bad data
+    			}
+    		}
+    		else
+    		{
+    			//bad data
+    		}
+    		GENFSK_AbortAll();
+			GENFSK_StartRx(mAppGenfskId, gRxBuffer, gGenFskDefaultMaxBufferSize_c+crcConfig.crcSize, 0, 0);
+
     	}
 
 
 #else
-    	Serial_Print(mAppSerId,"Received a packet!\r\n",gAllowToBlock_d);
     	if(devID == LEDCONTROL_DEVICE_ID)
     	{
     		gTxPacket.payload[0] = LEDCONTROL_DEVICE_ID;
-			if(data == 0)
+
+			if(data == 'r')
 			{
 				Led2Toggle();
 				gTxPacket.payload[1] = 'r';
+				buffLen = gTxPacket.header.lengthField+(gGenFskDefaultHeaderSizeBytes_c)+(gGenFskDefaultSyncAddrSize_c + 1);
+				GENFSK_PacketToByteArray(mAppGenfskId, &gTxPacket, gTxBuffer);
+				GENFSK_AbortAll();
+				GENFSK_StartTx(mAppGenfskId, gTxBuffer, buffLen, 0);
 			}
-			else if(data == 1)
+			else if(data == 'g')
 			{
 				Led3Toggle();
 				gTxPacket.payload[1] = 'g';
+				buffLen = gTxPacket.header.lengthField+(gGenFskDefaultHeaderSizeBytes_c)+(gGenFskDefaultSyncAddrSize_c + 1);
+				GENFSK_PacketToByteArray(mAppGenfskId, &gTxPacket, gTxBuffer);
+				GENFSK_AbortAll();
+				GENFSK_StartTx(mAppGenfskId, gTxBuffer, buffLen, 0);
 			}
-			else if(data == 2)
+			else if(data == 'b')
 			{
 				Led4Toggle();
 				gTxPacket.payload[1] = 'b';
+				buffLen = gTxPacket.header.lengthField+(gGenFskDefaultHeaderSizeBytes_c)+(gGenFskDefaultSyncAddrSize_c + 1);
+				GENFSK_PacketToByteArray(mAppGenfskId, &gTxPacket, gTxBuffer);
+				GENFSK_AbortAll();
+				GENFSK_StartTx(mAppGenfskId, gTxBuffer, buffLen, 0);
 			}
-			else if(data == 3)
+			else if(data == 'v')
 			{
 				//this packet is so the master can check slave is still connected, send response back
-				gTxPacket.payload[1] = 'y';
+	    		Serial_Print(mAppSerId,"Right place\r\n",gAllowToBlock_d);
+				gTxPacket.payload[1] = 'v';
+				buffLen = gTxPacket.header.lengthField+(gGenFskDefaultHeaderSizeBytes_c)+(gGenFskDefaultSyncAddrSize_c + 1);
+				GENFSK_PacketToByteArray(mAppGenfskId, &gTxPacket, gTxBuffer);
+				GENFSK_AbortAll();
+				GENFSK_StartTx(mAppGenfskId, gTxBuffer, buffLen, 0);
 			}
-			else{}
-			buffLen = gTxPacket.header.lengthField+(gGenFskDefaultHeaderSizeBytes_c)+(gGenFskDefaultSyncAddrSize_c + 1);
-			GENFSK_PacketToByteArray(mAppGenfskId, &gTxPacket, gTxBuffer);
-			appState = gAppTx_c;
+			else
+			{
+				//bad data
+				Serial_Print(mAppSerId,"Bad data\r\n",gAllowToBlock_d);
+				GENFSK_AbortAll();
+				GENFSK_StartRx(mAppGenfskId, gRxBuffer, gGenFskDefaultMaxBufferSize_c+crcConfig.crcSize, 0, 0);
+			}
+
+    	}
+    	else
+    	{
+    		//bad id
+    		GENFSK_AbortAll();
+    		GENFSK_StartRx(mAppGenfskId, gRxBuffer, gGenFskDefaultMaxBufferSize_c+crcConfig.crcSize, 0, 0);
     	}
 #endif
     }
     else if(flags & gCtEvtTxDone_c)
     {
-
-#ifdef LEDCONTROL_MASTER
-    	if(gTxPacket.payload[1] == 3)//if last packet was a connection check
-    	{
-    		TMR_StartSingleShotTimer(mAppTmrId, LEDCONTROL_CONNECTIONCHECK_TIMEOUT_MILLISECONDS, App_TimerCallback, NULL);
-    	}
-    	else
-    	{
-    		Serial_Print(mAppSerId,"Last packet not a connection check\r\n",gAllowToBlock_d);
-    	}
-#endif
-    	appState = gAppRx_c;
+    	Serial_Print(mAppSerId,"Finished transmission\r\n",gAllowToBlock_d);
+    	GENFSK_AbortAll();
+    	GENFSK_StartRx(mAppGenfskId, gRxBuffer, gGenFskDefaultMaxBufferSize_c+crcConfig.crcSize, 0, 0);
     }
     else if(flags & gCtEvtTimerExpired_c)
     {
 #ifdef LEDCONTROL_MASTER
-    	if(timerInit)
-    	{
-    		TMR_StopTimer(mAppTmrId);
-
-			switch(conState)
+		if(conState == gAppSlave1Check)
+		{
+			if(!slave1connected)
 			{
-			case gAppSlave1Check:
-				Serial_Print(mAppSerId,"Test failed for slave 1; disconnect\r\n",gNoBlock_d);
-				break;
-			case gAppSlave2Check:
-				Serial_Print(mAppSerId,"Test failed for slave 2; disconnect\r\n",gNoBlock_d);
-				break;
-			case gAppSlave3Check:
-				Serial_Print(mAppSerId,"Test failed for slave 3; disconnect\r\n",gNoBlock_d);
-				break;
-			default: break;
-			}
-			if(conState == gAppSlave1Check)
-			{
-				conState = gAppSlave2Check;
-			}
-			else if(conState == gAppSlave2Check)
-			{
-				conState = gAppSlave3Check;
-			}
-			else if(conState == gAppSlave3Check)
-			{
-				conState = gAppSlave1Check;
+				Serial_Print(mAppSerId,"Slave 1 disconnected\r\n",gAllowToBlock_d);
 			}
 			else
 			{
-				//unreachable
+				Serial_Print(mAppSerId,"Slave 1 connected\r\n",gAllowToBlock_d);
 			}
-			gTxPacket.payload[1] = 3;
-			if(conState == gAppSlave1Check)
+			conState = gAppSlave2Check;
+			slave2connected = false;
+			gTxPacket.payload[0] = LEDCONTROL_DEVICE_ID_ONE;
+		}
+		else if(conState == gAppSlave2Check)
+		{
+			if(!slave2connected)
 			{
-				gTxPacket.payload[0] = LEDCONTROL_DEVICE_ID_ZERO;
-			}
-			else if(conState == gAppSlave2Check)
-			{
-				gTxPacket.payload[0] = LEDCONTROL_DEVICE_ID_ONE;
-			}
-			else if(conState == gAppSlave3Check)
-			{
-				gTxPacket.payload[0] = LEDCONTROL_DEVICE_ID_TWO;
+				Serial_Print(mAppSerId,"Slave 2 disconnected\r\n",gAllowToBlock_d);
 			}
 			else
 			{
-				//unreachable
+				Serial_Print(mAppSerId,"Slave 2 connected\r\n",gAllowToBlock_d);
 			}
-			buffLen = gTxPacket.header.lengthField+(gGenFskDefaultHeaderSizeBytes_c)+(gGenFskDefaultSyncAddrSize_c + 1);
-			GENFSK_PacketToByteArray(mAppGenfskId, &gTxPacket, gTxBuffer);
-			appState = gAppTx_c;
-
-    	}
-    	else
-    	{
-			gTxPacket.payload[1] = 3;
+			conState = gAppSlave3Check;
+			slave3connected = false;
+			gTxPacket.payload[0] = LEDCONTROL_DEVICE_ID_TWO;
+		}
+		else if(conState == gAppSlave3Check)
+		{
+			if(!slave3connected)
+			{
+				Serial_Print(mAppSerId,"Slave 3 disconnected\r\n",gAllowToBlock_d);
+			}
+			else
+			{
+				Serial_Print(mAppSerId,"Slave 3 connected\r\n",gAllowToBlock_d);
+			}
+			conState = gAppSlave1Check;
+			slave1connected = false;
 			gTxPacket.payload[0] = LEDCONTROL_DEVICE_ID_ZERO;
-    		timerInit = true;
-			buffLen = gTxPacket.header.lengthField+(gGenFskDefaultHeaderSizeBytes_c)+(gGenFskDefaultSyncAddrSize_c + 1);
-			GENFSK_PacketToByteArray(mAppGenfskId, &gTxPacket, gTxBuffer);
-			appState = gAppTx_c;
-    	}
+		}
+		else
+		{
+			//unreachable
+		}
+		gTxPacket.payload[1] = 'v';
+		buffLen = gTxPacket.header.lengthField+(gGenFskDefaultHeaderSizeBytes_c)+(gGenFskDefaultSyncAddrSize_c + 1);
+		GENFSK_PacketToByteArray(mAppGenfskId, &gTxPacket, gTxBuffer);
+		GENFSK_AbortAll();
+		GENFSK_StartTx(mAppGenfskId, gTxBuffer, buffLen, 0);
 #endif
-    }
-    else
-    {
-    	App_NotifySelf();
+
     }
 
 }
@@ -574,7 +582,7 @@ static void gFsk_Init()
     gTxPacket.addr = gGenFskDefaultSyncAddress_c;
     gTxPacket.header.h0Field = gGenFskDefaultH0Value_c;
     gTxPacket.header.h1Field = gGenFskDefaultH1Value_c;
-
+	gTxPacket.header.lengthField = gGenFskMinPayloadLen_c;
     /*set bitrate*/
     GENFSK_RadioConfig(mAppGenfskId, &radioConfig);
     /*set packet config*/

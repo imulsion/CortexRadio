@@ -16,12 +16,6 @@
 * Public type definitions
 *************************************************************************************
 ********************************************************************************** */
-/*application state machine states enumeration*/
-typedef enum app_states_tag
-{
-	gAppTx_c = 0,
-	gAppRx_c = 1,
-}app_states_t;
 
 typedef enum
 {
@@ -48,16 +42,7 @@ typedef enum ct_event_tag
 	gCtEvtEventsAll_c    = 0x000003FFU
 }ct_event_t;
 
-/*LED packet type*/
-typedef enum
-{
 
-	LEDControl_LED_RED_c = 0,
-	LEDControl_LED_GREEN_c = 1,
-	LEDControl_LED_BLUE_c = 2,
-	LEDControl_LED_Verify_c = 3,
-
-}LEDControl_LED_Data_t;
 
 typedef struct ct_rx_indication_tag
 {
@@ -140,7 +125,7 @@ typedef void (* pTmrHookNotification) (void*);
 #define LEDCONTROL_DEVICE_ID_TWO 2
 
 /*Master/Slave select*/
-//#define LEDCONTROL_MASTER
+#define LEDCONTROL_MASTER
 
 /*Device ID*/
 #ifndef LEDCONTROL_MASTER
@@ -148,7 +133,7 @@ typedef void (* pTmrHookNotification) (void*);
 #endif
 
 #ifdef LEDCONTROL_MASTER
-#define LEDCONTROL_CONNECTIONCHECK_TIMEOUT_MILLISECONDS 500 // number of milliseconds without reply before slave is considered disconnected
+#define LEDCONTROL_CONNECTIONCHECK_TIMEOUT_MILLISECONDS 2000 // number of milliseconds without reply before slave is considered disconnected
 #endif
 
 
@@ -233,6 +218,8 @@ uint8_t mAppSerId;
 /* Timer instance ID */
 uint8_t mAppTmrId;
 
-bool slave1connected,slave2connected,slave3connected;
+bool slave1connected = false;
+bool slave2connected = false;
+bool slave3connected = false;
 
 #endif /* _APPL_MAIN_H_ */
