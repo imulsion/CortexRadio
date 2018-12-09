@@ -1,4 +1,3 @@
-
 #ifndef _APPL_MAIN_H_
 #define _APPL_MAIN_H_
 
@@ -24,45 +23,35 @@ typedef enum app_states_tag
 	gAppRx_c = 1,
 }app_states_t;
 
-/*! *********************************************************************************
-*************************************************************************************
-* Public macros
-*************************************************************************************
-********************************************************************************** */
-/*
- * These values should be modified by the application as necessary.
- * They are used by the idle task initialization code from ApplMain.c.
- */
-/*! Idle Task Stack Size */
-#ifndef gAppIdleTaskStackSize_c
-#define gAppIdleTaskStackSize_c (400)
-#endif
-
-/*! Idle Task OS Abstraction Priority */
-#ifndef gAppIdleTaskPriority_c
-#define gAppIdleTaskPriority_c  (8)
-#endif
-
-
 typedef enum ct_event_tag
 {
-  gCtEvtRxDone_c       = 0x00000001U,
-  gCtEvtTxDone_c       = 0x00000002U,
-  gCtEvtSeqTimeout_c   = 0x00000004U,
-  gCtEvtRxFailed_c     = 0x00000008U,
+	gCtEvtRxDone_c       = 0x00000001U,
+	gCtEvtTxDone_c       = 0x00000002U,
+	gCtEvtSeqTimeout_c   = 0x00000004U,
+	gCtEvtRxFailed_c     = 0x00000008U,
 
-  gCtEvtTimerExpired_c = 0x00000010U,
-  gCtEvtUart_c         = 0x00000020U,
-  gCtEvtKBD_c          = 0x00000040U,
-  gCtEvtSelfEvent_c    = 0x00000080U,
+	gCtEvtTimerExpired_c = 0x00000010U,
+	gCtEvtUart_c         = 0x00000020U,
+	gCtEvtKBD_c          = 0x00000040U,
+	gCtEvtSelfEvent_c    = 0x00000080U,
 
-  gCtEvtWakeUp_c       = 0x00000100U,
+	gCtEvtWakeUp_c       = 0x00000100U,
 
-  gCtEvtMaxEvent_c     = 0x00000200U,
-  gCtEvtEventsAll_c    = 0x000003FFU
+	gCtEvtMaxEvent_c     = 0x00000200U,
+	gCtEvtEventsAll_c    = 0x000003FFU
 }ct_event_t;
 
 
+/*LED packet type*/
+typedef enum
+{
+
+	LEDControl_LED_RED_c = 0,
+	LEDControl_LED_GREEN_c = 1,
+	LEDControl_LED_BLUE_c = 2,
+	LEDControl_LED_Verify_c = 3,
+
+}LEDControl_LED_Data_t;
 
 typedef struct ct_rx_indication_tag
 {
@@ -76,12 +65,24 @@ typedef struct ct_rx_indication_tag
 typedef void (* pHookAppNotification) ( void );
 typedef void (* pTmrHookNotification) (void*);
 
-
 /*! *********************************************************************************
 *************************************************************************************
 * Public macros
 *************************************************************************************
 ********************************************************************************** */
+/*
+ * These values should be modified by the application as necessary.
+ */
+/*! Idle Task Stack Size */
+#ifndef gAppIdleTaskStackSize_c
+#define gAppIdleTaskStackSize_c (400)
+#endif
+
+/*! Idle Task OS Abstraction Priority */
+#ifndef gAppIdleTaskPriority_c
+#define gAppIdleTaskPriority_c  (8)
+#endif
+
 #define gModeRx_c (1)
 #define gModeTx_c (2)
 #define gDefaultMode_c gModeRx_c
@@ -127,6 +128,18 @@ typedef void (* pTmrHookNotification) (void*);
 
 #define gGenFskDefaultH1Value_c        (0x0000)
 #define gGenFskDefaultH1Mask_c         ((1 << gGenFskDefaultH1FieldSize_c) - 1)
+
+/*Master/Slave select*/
+#define LEDCONTROL_MASTER
+
+/*Device ID*/
+#ifndef LEDCONTROL_MASTER
+#define LEDCONTROL_DEVICE_ID 0
+#endif
+
+
+
+/*LED data
 /*! *********************************************************************************
 *************************************************************************************
 * Public memory declarations
@@ -191,8 +204,6 @@ static GENFSK_radio_config_t radioConfig =
     .dataRate = gGenfskDR1Mbps
 };
 
-/*bit processing configuration*/
-
 /*network / sync address configuration*/
 static GENFSK_nwk_addr_match_t ntwkAddr =
 {
@@ -201,9 +212,11 @@ static GENFSK_nwk_addr_match_t ntwkAddr =
     .nwkAddr = gGenFskDefaultSyncAddress_c,
 };
 
+/* GENFSK instance id*/
+uint8_t mAppGenfskId;
 
+/* Serial instance id*/
 uint8_t mAppSerId;
-uint8_t mAppTmrId;
 
 
 #endif /* _APPL_MAIN_H_ */

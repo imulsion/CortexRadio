@@ -63,9 +63,6 @@ static ct_rx_indication_t mAppRxLatestPacket;
 /*latest generic fsk event status*/
 static genfskEventStatus_t mAppGenfskStatus;
 
-/* GENFSK instance id*/
-uint8_t mAppGenfskId;
-
 // transmission buffer and packet
 static uint8_t* gTxBuffer;
 static GENFSK_packet_t gTxPacket;
