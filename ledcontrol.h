@@ -23,6 +23,13 @@ typedef enum app_states_tag
 	gAppRx_c = 1,
 }app_states_t;
 
+typedef enum
+{
+	gAppSlave1Check = 0,
+	gAppSlave2Check = 1,
+	gAppSlave3Check = 2,
+}connectivity_states_t;
+
 typedef enum ct_event_tag
 {
 	gCtEvtRxDone_c       = 0x00000001U,
@@ -40,7 +47,6 @@ typedef enum ct_event_tag
 	gCtEvtMaxEvent_c     = 0x00000200U,
 	gCtEvtEventsAll_c    = 0x000003FFU
 }ct_event_t;
-
 
 /*LED packet type*/
 typedef enum
@@ -129,17 +135,23 @@ typedef void (* pTmrHookNotification) (void*);
 #define gGenFskDefaultH1Value_c        (0x0000)
 #define gGenFskDefaultH1Mask_c         ((1 << gGenFskDefaultH1FieldSize_c) - 1)
 
+#define LEDCONTROL_DEVICE_ID_ZERO 0
+#define LEDCONTROL_DEVICE_ID_ONE 1
+#define LEDCONTROL_DEVICE_ID_TWO 2
+
 /*Master/Slave select*/
-#define LEDCONTROL_MASTER
+//#define LEDCONTROL_MASTER
 
 /*Device ID*/
 #ifndef LEDCONTROL_MASTER
-#define LEDCONTROL_DEVICE_ID 0
+#define LEDCONTROL_DEVICE_ID LEDCONTROL_DEVICE_ID_ZERO
+#endif
+
+#ifdef LEDCONTROL_MASTER
+#define LEDCONTROL_CONNECTIONCHECK_TIMEOUT_MILLISECONDS 500 // number of milliseconds without reply before slave is considered disconnected
 #endif
 
 
-
-/*LED data
 /*! *********************************************************************************
 *************************************************************************************
 * Public memory declarations
@@ -218,5 +230,9 @@ uint8_t mAppGenfskId;
 /* Serial instance id*/
 uint8_t mAppSerId;
 
+/* Timer instance ID */
+uint8_t mAppTmrId;
+
+bool slave1connected,slave2connected,slave3connected;
 
 #endif /* _APPL_MAIN_H_ */
